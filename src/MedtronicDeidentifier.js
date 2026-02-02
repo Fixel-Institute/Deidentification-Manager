@@ -74,6 +74,7 @@ function replaceJSONTimestamp( item, shift ) {
 
 export default function MedtronicDeidentifier() {
   const [encryptionKey, setEncryptionKey] = useState({
+    keepdate: false,
     encrypt: false,
     rawKey: "",
     salt: "",
@@ -98,7 +99,7 @@ export default function MedtronicDeidentifier() {
       let json = JSON.parse(event.target.result);
 
       if (!encryptionKey.encrypt) {
-        const shift = -new Date(json.SessionDate).getTime();
+        let shift = encryptionKey.keepdate ? 0 : -new Date(json.SessionDate).getTime();
         json = replaceJSONTimestamp(json, shift);
 
         for (let key of ["Initial", "Final"]) {
@@ -108,7 +109,11 @@ export default function MedtronicDeidentifier() {
           json.PatientInformation[key].ClinicianNotes = "";
           json.DeviceInformation[key].NeurostimulatorSerialNumber = "";
           json.DeviceInformation[key].DeviceName = "";
+          if (encryptionKey.keepdate) {
+            json.PatientInformation[key].PatientDateOfBirth = "2000-01-01T00:00:00Z";
+          }
         }
+
       } else {
         var enc = new TextEncoder();
         let salt = window.crypto.randomUUID();
@@ -120,19 +125,17 @@ export default function MedtronicDeidentifier() {
         const keyArray = await window.crypto.subtle.exportKey("raw", derivedKey);
         const dv = new DataView(keyArray, 0);
 
-        const shift = (dv.getUint32(0) * dv.getUint32(8) / dv.getUint32(16)) + (dv.getUint32(4) - dv.getUint32(12));
+        let shift = encryptionKey.keepdate ? 0 : ((dv.getUint32(0) * dv.getUint32(8) / dv.getUint32(16)) + (dv.getUint32(4) - dv.getUint32(12)));
         json = replaceJSONTimestamp(json, shift);
         json.TimeShiftSalt = salt;
-
-        let state = 2
-
+        
+        let state = 2;
         for (let key of ["Initial", "Final"]) {
           salt = window.crypto.randomUUID().replaceAll("-","");
           token = await getFernetToken(rawKey, enc.encode(salt));
           json.PatientInformation[key].PatientFirstName = token.encode(json.PatientInformation[key].PatientFirstName);
           json.PatientInformation[key].PatientFirstName = json.PatientInformation[key].PatientFirstName.slice(0,9) + salt + json.PatientInformation[key].PatientFirstName.slice(9);
           progress(true, state++, 14);
-
 
           salt = window.crypto.randomUUID().replaceAll("-","");
           token = await getFernetToken(rawKey, enc.encode(salt));
@@ -281,14 +284,14 @@ export default function MedtronicDeidentifier() {
           <FormControlLabel control={
             <Checkbox defaultChecked value={!encryptionKey.encrypt} onChange={(event) => {
               if (event.target.checked) {
-                setEncryptionKey({
+                setEncryptionKey({...encryptionKey, 
                   encrypt: false,
                   rawKey: "",
                   keyArray: "",
                   token: null
                 })
               } else {
-                setEncryptionKey({
+                setEncryptionKey({...encryptionKey,
                   encrypt: true,
                   rawKey: "",
                   keyArray: "",
@@ -306,6 +309,21 @@ export default function MedtronicDeidentifier() {
             }} />
           </Box>
         ) : null}
+        <Box>
+          <FormControlLabel control={
+            <Checkbox value={encryptionKey.keepdate} onChange={(event) => {
+              if (event.target.checked) {
+                setEncryptionKey({...encryptionKey, 
+                  keepdate: true,
+                })
+              } else {
+                setEncryptionKey({...encryptionKey, 
+                  keepdate: false,
+                })
+              }
+            }}/>
+          } label={"Keep Timestamps (Except DOB)"}/>
+        </Box>
         <Box marginTop={5}>
           <FilePond
             name="File" 
